@@ -1,0 +1,16 @@
+{
+    "name": "BenchToBanner.Runtime",
+    "rootNamespace": "BenchToBanner.Runtime",
+    "references": [
+        "BenchToBanner.Physics"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

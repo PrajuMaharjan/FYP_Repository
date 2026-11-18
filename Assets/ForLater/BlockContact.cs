@@ -1,0 +1,1 @@
+// Vec3d after = ContactModel.BlockDeflect(velocityAtNet, surfaceNormal, 0.6, 0.8);
