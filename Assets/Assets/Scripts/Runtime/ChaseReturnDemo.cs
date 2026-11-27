@@ -79,6 +79,13 @@ namespace BenchToBanner.Runtime
 
         private float _floorY;            // world height of the floor surface; simulation Y = world Y - _floorY
         private Vector3 _ballStart;
+        private Vector3 _ballPivotOffset;     // ball's pivot minus the centre of what you can see (non-zero for models whose pivot is not in the middle)
+        private float _ballLift;              // raises an oversized ball so its bottom rests on the floor
+        private float _ballVisualRadius;
+        private Vector3 _lastShown;           // where this script last put the ball
+        private bool _haveShown;
+        private bool _warnedMoved;
+        private bool _ballMeasured;
         private Vector3[] _playerStart;
         private Vec3d _prevBall;
         private Vec3d _currBall;
@@ -139,11 +146,17 @@ namespace BenchToBanner.Runtime
             if (!ValidateTeams()) return;
 
             _floorY = ResolveFloorHeight();
-            CheckBallSize();
             if (tintTeams) TintTeams();
 
             // Back to the starting layout, standing on the floor.
             ball.position = _ballStart;
+            PrepareBall();
+            MeasureBall();
+            Debug.Log("ChaseReturnDemo: the code's net is the plane X = 0, and its top tape is at world Y = " +
+                      (_floorY + (float)_court.NetHeight).ToString("F3") + " (floor surface + " + _court.NetHeight.ToString("F2") +
+                      " m). Your visible net's top tape should be at that height.");
+            _haveShown = false;
+            _warnedMoved = false;
             List<PlayerAgent> agents = new List<PlayerAgent>();
             for (int i = 0; i < _all.Length; i++)
             {
@@ -176,7 +189,7 @@ namespace BenchToBanner.Runtime
             _sim.TouchesPerSide = touchesPerSide;
 
             // Serve from the ball's start position to the other side of the net.
-            Vec3d serveFrom = ToSim(_ballStart);
+            Vec3d serveFrom = ToSim(_ballStart - _ballPivotOffset - new Vector3(0f, _ballLift, 0f));
             int servingSide = _ballStart.x < 0f ? -1 : 1;
             Vec3d serveTo;
             if (serveTarget != null)
@@ -213,6 +226,18 @@ namespace BenchToBanner.Runtime
         {
             if (!_running) return;
 
+            if (_haveShown && !_warnedMoved)
+            {
+                float moved = (ball.position - _lastShown).magnitude;
+                if (moved > 0.05f)
+                {
+                    _warnedMoved = true;
+                    Debug.LogWarning("ChaseReturnDemo: something else moved the ball by " + moved.ToString("F2") +
+                                     " m since this script last placed it. That is why it can pass through the net or the floor. " +
+                                     "Components on the ball: " + ComponentList(ball) + ". Remove any Rigidbody and any other script that moves it.");
+                }
+            }
+
             int steps = _clock.Advance(Time.deltaTime);
             for (int i = 0; i < steps; i++)
             {
@@ -223,10 +248,16 @@ namespace BenchToBanner.Runtime
             _currBall = _sim.BallPosition;
 
             Vec3d shown = _sim.RallyOver ? _currBall : Vec3d.Lerp(_prevBall, _currBall, _clock.Alpha);
-            ball.position = ToWorld(shown);
+            ball.position = ToWorld(shown) + _ballPivotOffset + new Vector3(0f, _ballLift, 0f);
+            _lastShown = ball.position;
+            _haveShown = true;
             ApplyPlayers();
 
-            if (_sim.RallyOver) _running = false;
+            if (_sim.RallyOver)
+            {
+                _running = false;
+                ReportBallRest();
+            }
         }
 
         private void ApplyPlayers()
@@ -402,6 +433,18 @@ namespace BenchToBanner.Runtime
         {
             if (floor == null)
             {
+                // Not assigned: try the obvious names before giving up.
+                GameObject found = GameObject.Find("Floor");
+                if (found == null) found = GameObject.Find("Ground");
+                if (found != null)
+                {
+                    floor = found.transform;
+                    Debug.LogWarning("ChaseReturnDemo: no Floor assigned, so I used the object named '" + found.name +
+                                     "'. Drag your floor into the Floor field to be sure.");
+                }
+            }
+            if (floor == null)
+            {
                 Debug.LogWarning("ChaseReturnDemo: no Floor assigned, so the floor is assumed to be at world Y = 0. " +
                                  "Drag your floor object into the Floor field so the ball lands on its surface.");
                 return 0f;
@@ -420,23 +463,98 @@ namespace BenchToBanner.Runtime
         }
 
         /// <summary>
-        /// The physics uses a 0.105 m ball radius. If the sphere on screen is a different size it will look
-        /// like it sinks into the floor (too big) or floats above it (too small).
+        /// This script moves the ball by setting its position every step. Anything else that moves it breaks that:
+        ///  - a Rigidbody with gravity keeps adding downward speed while the script teleports the ball, and when the
+        ///    rally ends that stored speed carries it straight through a thin floor, and the net has no collider to stop it;
+        ///  - BallPhysicsDriver (the single-shot demo) does not know about the net or this floor.
+        /// So a Rigidbody is made kinematic (no gravity, not moved by physics) and BallPhysicsDriver is switched off.
         /// </summary>
-        private void CheckBallSize()
+        private void PrepareBall()
         {
+            Rigidbody body = ball.GetComponentInChildren<Rigidbody>();
+            if (body != null && (!body.isKinematic || body.useGravity))
+            {
+                body.isKinematic = true;
+                body.useGravity = false;
+                Debug.LogWarning("ChaseReturnDemo: the ball had a Rigidbody that Unity's physics was moving (gravity). " +
+                                 "I made it Kinematic with Use Gravity off. It is cleaner to remove the Rigidbody from the ball.");
+            }
+
+#if UNITY_2022_2_OR_NEWER
+            BallPhysicsDriver[] drivers = FindObjectsByType<BallPhysicsDriver>(FindObjectsSortMode.None);
+#else
+            BallPhysicsDriver[] drivers = FindObjectsOfType<BallPhysicsDriver>();
+#endif
+            for (int i = 0; i < drivers.Length; i++)
+            {
+                if (drivers[i].enabled)
+                {
+                    drivers[i].enabled = false;
+                    Debug.LogWarning("ChaseReturnDemo: BallPhysicsDriver on '" + drivers[i].name + "' was also moving the ball. I switched it off. " +
+                                     "Untick it yourself so it is clear which script is in charge.");
+                }
+            }
+
+            Debug.Log("ChaseReturnDemo: components on the ball: " + ComponentList(ball) + ".");
+        }
+
+        private static string ComponentList(Transform t)
+        {
+            Component[] all = t.GetComponents<Component>();
+            string list = "";
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == null) continue; // a missing script
+                list += (list.Length > 0 ? ", " : "") + all[i].GetType().Name;
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// The physics tracks the ball's CENTRE and uses a 0.105 m radius. Two things can make the ball on screen
+        /// sink into the floor even though the physics is right, and both are corrected here:
+        ///  - the model's pivot is not at its centre (common for imported ball models): the offset is removed;
+        ///  - the ball is bigger than 0.21 m (a default Unity sphere is 1 m): it is lifted so its bottom rests on the floor.
+        /// Setting the ball's Scale to 0.21 is still the proper fix (the warning says so).
+        /// </summary>
+        private void MeasureBall()
+        {
+            _ballPivotOffset = Vector3.zero;
+            _ballLift = 0f;
+            _ballMeasured = false;
             MeshRenderer mr = ball.GetComponentInChildren<MeshRenderer>();
             if (mr == null) return;
-            float visualRadius = mr.bounds.extents.y;
+
+            Bounds bounds = mr.bounds;
+            _ballPivotOffset = ball.position - bounds.center;
+            float visualRadius = bounds.extents.y;
+            _ballVisualRadius = visualRadius;
+            _ballMeasured = true;
             float physicsRadius = (float)_config.Radius;
+
+            if (_ballPivotOffset.magnitude > 0.02f)
+            {
+                Debug.LogWarning("ChaseReturnDemo: the ball's pivot is " + _ballPivotOffset.magnitude.ToString("F2") +
+                                 " m away from the middle of the ball you can see. The demo compensates, but it is cleaner to centre the pivot.");
+            }
             if (Mathf.Abs(visualRadius - physicsRadius) > 0.02f)
             {
                 float scale = ball.lossyScale.y * physicsRadius / visualRadius;
+                if (visualRadius > physicsRadius) _ballLift = visualRadius - physicsRadius;
                 Debug.LogWarning("ChaseReturnDemo: the ball on screen has a radius of " + visualRadius.ToString("F3") +
-                                 " m but the physics uses " + physicsRadius.ToString("F3") + " m, so it will look like it " +
-                                 (visualRadius > physicsRadius ? "sinks into" : "floats above") + " the floor. " +
+                                 " m but the physics uses " + physicsRadius.ToString("F3") + " m. " +
+                                 (visualRadius > physicsRadius ? "The demo lifts it so it rests on the floor, but it will look too big and the arcs will look off. " : "It will look like it floats above the floor. ") +
                                  "For a default Unity sphere set the ball's Scale to " + scale.ToString("F2") + " on every axis.");
             }
+        }
+
+        /// <summary>Prints where the ball actually ended up, so a ball that looks sunk can be checked against the floor.</summary>
+        private void ReportBallRest()
+        {
+            if (!_ballMeasured) return;
+            float bottom = (ball.position.y - _ballPivotOffset.y) - _ballVisualRadius;
+            Debug.Log("ChaseReturnDemo: the ball came to rest with its lowest point at world Y = " + bottom.ToString("F3") +
+                      "; the floor surface is at world Y = " + _floorY.ToString("F3") + ".");
         }
 
         // ------------------------------------------------------------------ coordinates

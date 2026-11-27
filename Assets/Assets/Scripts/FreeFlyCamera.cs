@@ -12,7 +12,7 @@ namespace BenchToBanner.CameraTools
     ///   Hold right mouse button   look around (the cursor is hidden and locked while held)
     ///   W / S                     fly forward / back, in the direction you are looking
     ///   A / D                     strafe left / right
-    ///   E / Q                     fly up / down
+    ///   Space / C                 fly up / down
     ///   Left Shift                boost (multiplies speed)
     ///   Mouse wheel               make the camera faster / slower
     ///   R                         go back to where the camera started
@@ -147,7 +147,7 @@ namespace BenchToBanner.CameraTools
             f.reset = kb.rKey.wasPressedThisFrame;
             f.move = new Vector3(
                 (kb.dKey.isPressed ? 1f : 0f) - (kb.aKey.isPressed ? 1f : 0f),
-                (kb.eKey.isPressed ? 1f : 0f) - (kb.qKey.isPressed ? 1f : 0f),
+                (kb.spaceKey.isPressed ? 1f : 0f) - (kb.cKey.isPressed ? 1f : 0f),
                 (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f));
 #elif ENABLE_LEGACY_INPUT_MANAGER
             // Old Input Manager.
@@ -158,7 +158,7 @@ namespace BenchToBanner.CameraTools
             f.reset = Input.GetKeyDown(KeyCode.R);
             f.move = new Vector3(
                 (Input.GetKey(KeyCode.D) ? 1f : 0f) - (Input.GetKey(KeyCode.A) ? 1f : 0f),
-                (Input.GetKey(KeyCode.E) ? 1f : 0f) - (Input.GetKey(KeyCode.Q) ? 1f : 0f),
+                (Input.GetKey(KeyCode.Space) ? 1f : 0f) - (Input.GetKey(KeyCode.C) ? 1f : 0f),
                 (Input.GetKey(KeyCode.W) ? 1f : 0f) - (Input.GetKey(KeyCode.S) ? 1f : 0f));
 #endif
             return f;
@@ -168,7 +168,7 @@ namespace BenchToBanner.CameraTools
         {
             if (!showHelp) return;
             GUI.Label(new Rect(12f, Screen.height - 28f, 900f, 24f),
-                "Free camera:  hold right mouse = look   WASD = fly   Q/E = down/up   Shift = boost   wheel = speed (" +
+                "Free camera:  hold right mouse = look   WASD = fly   C/Space = down/up   Shift = boost   wheel = speed (" +
                 moveSpeed.ToString("F1") + " m/s)   R = reset");
         }
     }
