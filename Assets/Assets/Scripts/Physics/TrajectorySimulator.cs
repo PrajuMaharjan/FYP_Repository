@@ -17,6 +17,16 @@ namespace BenchToBanner.Physics
         public double NetCrossingTime;
         public Vec3d NetCrossingPosition;
 
+        /// <summary>
+        /// Set by <see cref="NetCollision"/> when the ball hit the net: the moment its surface touched the net,
+        /// where its centre was, and how fast it was moving (the impact). Zero/false for a normal flight.
+        /// This is the hook for a future net-impact model (net sag, rebound, roll-down).
+        /// </summary>
+        public bool HitNet;
+        public double NetHitTime;
+        public Vec3d NetHitPosition;
+        public Vec3d NetHitVelocity;
+
         public double ApexHeight;       // highest sampled ball-centre Y
         public double ApexTime;
 

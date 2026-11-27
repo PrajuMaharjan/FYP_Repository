@@ -693,6 +693,33 @@ namespace BenchToBanner.Physics.Tests
         }
 
         [Test]
+        public void Net_TheBallStopsWithItsSurfaceAtTheNet_NotHalfWayThrough()
+        {
+            foreach (int side in new[] { -1, 1 })
+            {
+                Vec3d from = new Vec3d(side * 3.0, 1.0, 0.0);
+                LaunchSolution sol = LaunchSolver.SolveByFlightTime(from, new Vec3d(-side * 5.0, 0.105, 0.0), 1.0, Cfg);
+                TrajectoryResult free = TrajectorySimulator.Simulate(from, sol.Velocity, Cfg);
+                bool hit;
+                TrajectoryResult r = NetCollision.Apply(free, Court, Cfg, out hit);
+                Assert.IsTrue(hit);
+                Assert.IsTrue(r.HitNet);
+
+                // The centre is never closer than one ball radius to the net plane: no part of the ball is in the net.
+                for (int i = 0; i < r.Samples.Count - 1; i++)
+                    Assert.GreaterOrEqual(side * r.Samples[i].Position.X, Cfg.Radius - 1e-9, "sample " + i + " has the ball inside the net");
+
+                // It rests exactly one radius from the net, and the impact is recorded.
+                Assert.AreEqual(side * Cfg.Radius, r.NetHitPosition.X, 1e-12);
+                Assert.Greater(System.Math.Abs(r.NetHitVelocity.X), 1.0, "impact should be moving towards the net");
+                Assert.AreEqual(-side, System.Math.Sign(r.NetHitVelocity.X), "impact velocity points at the net");
+                Assert.Greater(r.NetHitTime, 0.0);
+                Assert.Less(r.NetHitTime, free.NetCrossingTime, "the surface touches the net before the centre would cross it");
+                Assert.AreEqual(side, System.Math.Sign(r.LandingPosition.X));
+            }
+        }
+
+        [Test]
         public void Net_AHighArcIsLeftAlone()
         {
             Vec3d from = new Vec3d(-3.0, 1.0, 0.0);
