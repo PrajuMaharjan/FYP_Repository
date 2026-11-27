@@ -651,5 +651,164 @@ namespace BenchToBanner.Physics.Tests
             Assert.AreEqual(a.ContactCount, b.ContactCount);
             Assert.AreNotEqual(a.Fingerprint, c.Fingerprint, "a different seed should play differently");
         }
+
+        // ---------------------------------------------------------------- the net as an obstacle + random flight times
+
+        private static ReturnRules NetRules(double minT, double maxT)
+        {
+            ReturnRules r = new ReturnRules();
+            r.NetCollides = true;
+            r.MinFlightTime = minT;
+            r.MaxFlightTime = maxT;
+            r.MaxLaunchSpeed = 80.0;
+            return r;
+        }
+
+        private static ChaseReturnSim NetSim(ulong seed, ReturnRules rules, double speed = 4.5)
+        {
+            ChaseReturnSim sim = new ChaseReturnSim(Cfg, Court, Team(speed), null, rules, seed);
+            sim.MaxContacts = 200;
+            Assert.IsTrue(sim.Serve(ServeStart, ServeTarget, 1.2));
+            return sim;
+        }
+
+        [Test]
+        public void Net_AFlatShotHitsTheNet_StopsAndDropsOnTheHittersSide()
+        {
+            Vec3d from = new Vec3d(-3.0, 1.0, 0.0);
+            LaunchSolution sol = LaunchSolver.SolveByFlightTime(from, new Vec3d(5.0, 0.105, 0.0), 1.0, Cfg);
+            Assert.IsTrue(sol.Converged);
+            TrajectoryResult free = TrajectorySimulator.Simulate(from, sol.Velocity, Cfg);
+            Assert.IsTrue(free.CrossedNet);
+            Assert.Less(free.NetCrossingPosition.Y - Cfg.Radius, Court.NetHeight, "test shot should be below the tape");
+
+            bool hit;
+            TrajectoryResult r = NetCollision.Apply(free, Court, Cfg, out hit);
+            Assert.IsTrue(hit);
+            Assert.IsTrue(r.Landed);
+            Assert.Less(r.LandingPosition.X, 0.0, "must land on the hitter's side");
+            Assert.AreEqual(Cfg.Radius, r.LandingPosition.Y, 1e-9);
+            for (int i = 0; i < r.Samples.Count - 1; i++)
+                Assert.Less(r.Samples[i].Position.X, 0.0, "ball must never pass the net (sample " + i + ")");
+        }
+
+        [Test]
+        public void Net_AHighArcIsLeftAlone()
+        {
+            Vec3d from = new Vec3d(-3.0, 1.0, 0.0);
+            LaunchSolution sol = LaunchSolver.SolveByFlightTime(from, new Vec3d(5.0, 0.105, 0.0), 3.0, Cfg);
+            TrajectoryResult free = TrajectorySimulator.Simulate(from, sol.Velocity, Cfg);
+            bool hit;
+            TrajectoryResult r = NetCollision.Apply(free, Court, Cfg, out hit);
+            Assert.IsFalse(hit);
+            Assert.IsTrue(object.ReferenceEquals(free, r), "an unhit flight should be returned unchanged");
+        }
+
+        [Test]
+        public void Net_BallPassingAroundThePost_IsNotStopped()
+        {
+            // Crosses X = 0 low but far outside the net's reach.
+            Vec3d from = new Vec3d(-3.0, 1.0, 7.0);
+            LaunchSolution sol = LaunchSolver.SolveByFlightTime(from, new Vec3d(5.0, 0.105, 7.0), 1.0, Cfg);
+            TrajectoryResult free = TrajectorySimulator.Simulate(from, sol.Velocity, Cfg);
+            bool hit;
+            NetCollision.Apply(free, Court, Cfg, out hit);
+            Assert.IsFalse(hit);
+        }
+
+        [Test]
+        public void RandomFlightTimes_StayInRange_AndActuallyVary()
+        {
+            ReturnRules rules = NetRules(2.0, 5.0);
+            DeterministicRng rng = new DeterministicRng(7);
+            double lo = double.MaxValue, hi = double.MinValue;
+            int n = 0;
+            for (int i = 0; i < 60; i++)
+            {
+                ReturnShot shot = ReturnPlanner.Plan(new Vec3d(-5.0, 1.0, 0.0), 1, Court, Cfg, rng, rules);
+                if (!shot.Found || shot.HitsNet) continue;
+                double t = shot.Flight.LandingTime;
+                Assert.GreaterOrEqual(t, 2.0 - 1e-6);
+                Assert.LessOrEqual(t, 5.0 + 1e-6);
+                lo = System.Math.Min(lo, t); hi = System.Math.Max(hi, t);
+                n++;
+            }
+            Assert.Greater(n, 30);
+            Assert.Greater(hi - lo, 1.5, "flight times should differ from return to return");
+        }
+
+        [Test]
+        public void Rally_WithNetAndShortTimes_EndsOnANetHit_NobodyPlaysIt_AndItDropsOnTheHittersSide()
+        {
+            int netEnds = 0;
+            for (ulong seed = 1; seed <= 60; seed++)
+            {
+                ChaseReturnSim sim = NetSim(seed, NetRules(0.8, 3.0));
+                RunToEnd(sim);
+                Assert.IsTrue(sim.RallyOver);
+                if (!sim.NetFault) continue;
+                netEnds++;
+
+                int hitIdx = sim.Log.FindIndex(e => e.Type == SimEventType.NetHit);
+                Assert.GreaterOrEqual(hitIdx, 0);
+                Assert.IsFalse(sim.Log.GetRange(hitIdx, sim.Log.Count - hitIdx).Exists(e => e.Type == SimEventType.Contact),
+                               "nobody may play the ball after it hit the net");
+                Assert.IsTrue(sim.EndReason.Contains("hit the net"), sim.EndReason);
+
+                SimEventInfo hitter = sim.Log.FindLast(e => e.Type == SimEventType.Contact);
+                if (hitter.Player >= 0 && sim.Log[hitIdx].Player >= 0)
+                {
+                    int side = sim.Players[hitter.Player].Side;
+                    SimEventInfo over = sim.Log[sim.Log.Count - 1];
+                    Assert.AreEqual(side, over.BallPosition.X < 0.0 ? -1 : 1, "ball must land on the hitter's side");
+                }
+            }
+            Assert.Greater(netEnds, 5, "short flight times should hit the net fairly often");
+        }
+
+        [Test]
+        public void Rally_WithRandomTimes_HasDifferentLengthsForDifferentSeeds()
+        {
+            HashSet<int> lengths = new HashSet<int>();
+            for (ulong seed = 1; seed <= 40; seed++)
+            {
+                ChaseReturnSim sim = NetSim(seed, NetRules(1.5, 5.0));
+                RunToEnd(sim);
+                lengths.Add(sim.ContactCount);
+            }
+            Assert.GreaterOrEqual(lengths.Count, 4, "rallies should not all end after the same number of returns");
+        }
+
+        [Test]
+        public void Rally_WithRandomTimesAndNet_IsStillBitIdenticalForTheSameSeed()
+        {
+            ChaseReturnSim a = NetSim(99, NetRules(1.0, 5.0));
+            ChaseReturnSim b = NetSim(99, NetRules(1.0, 5.0));
+            RunToEnd(a); RunToEnd(b);
+            Assert.AreEqual(a.Fingerprint, b.Fingerprint);
+            Assert.AreEqual(a.ContactCount, b.ContactCount);
+        }
+
+        [Test]
+        public void Serve_ThatHitsTheNet_EndsTheRallyWithNoReturns()
+        {
+            ChaseReturnSim sim = new ChaseReturnSim(Cfg, Court, Team(4.5), null, NetRules(1.0, 5.0), 1);
+            Assert.IsTrue(sim.Serve(ServeStart, new Vec3d(5.0, 0.105, 0.0), 0.7));
+            RunToEnd(sim);
+            Assert.IsTrue(sim.NetFault);
+            Assert.AreEqual(0, sim.ContactCount);
+            Assert.IsTrue(sim.Log.Exists(e => e.Type == SimEventType.NetHit));
+        }
+
+        [Test]
+        public void NetOff_BehavesAsBefore_NoNetHitsEver()
+        {
+            for (ulong seed = 1; seed <= 10; seed++)
+            {
+                ChaseReturnSim sim = NewSim(seed);
+                RunToEnd(sim);
+                Assert.IsFalse(sim.NetFault);
+            }
+        }
     }
 }

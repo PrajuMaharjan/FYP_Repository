@@ -11,7 +11,9 @@ namespace BenchToBanner.Physics
         /// <summary>Nobody can get under the current ball. Every player stops and stays put.</summary>
         BallUnreachable,
         /// <summary>The rally has ended (ball landed, or no legal return, or contact cap reached).</summary>
-        RallyOver
+        RallyOver,
+        /// <summary>The ball hit the net and dropped on the side it came from. The rally ends when it lands.</summary>
+        NetHit
     }
 
     public struct SimEventInfo
@@ -69,6 +71,8 @@ namespace BenchToBanner.Physics
         public bool PlayersFrozen { get; private set; }
         /// <summary>True once the current ball was judged out of everyone's reach (whether they stopped or chased anyway).</summary>
         public bool BallMissed { get; private set; }
+        /// <summary>True once a ball hit the net. Nobody plays it; the rally ends when it lands.</summary>
+        public bool NetFault { get; private set; }
         public string EndReason { get; private set; }
         public int ContactCount { get; private set; }
         public int StepCount { get { return _step; } }
@@ -128,7 +132,18 @@ namespace BenchToBanner.Physics
         public void StartFlight(Vec3d position, Vec3d velocity)
         {
             _started = true;
-            BeginFlight(TrajectorySimulator.Simulate(position, velocity, Config));
+            TrajectoryResult flight = TrajectorySimulator.Simulate(position, velocity, Config);
+            if (Rules.NetCollides)
+            {
+                bool hit;
+                flight = NetCollision.Apply(flight, Court, Config, out hit);
+                if (hit)
+                {
+                    NetFault = true;
+                    AddEvent(SimEventType.NetHit, -1, position, Vec3d.Zero, "The serve hit the net and dropped on the serving side.");
+                }
+            }
+            BeginFlight(flight);
         }
 
         // ------------------------------------------------------------------ stepping
@@ -145,7 +160,9 @@ namespace BenchToBanner.Physics
 
             if (_k >= last)
             {
-                string why = PlayersFrozen
+                string why = NetFault
+                    ? "The ball hit the net and dropped on the hitting side."
+                    : PlayersFrozen
                     ? "Nobody could get under the ball, so all players stopped."
                     : BallMissed
                         ? "Nobody got to the ball in time; it hit the floor."
@@ -192,6 +209,12 @@ namespace BenchToBanner.Physics
                 Finish("No legal return was found from that contact point (the ball cannot clear the net from there).");
                 return;
             }
+            if (shot.HitsNet)
+            {
+                NetFault = true;
+                AddEvent(SimEventType.NetHit, idx, ballPos, playerPos,
+                         "Player " + idx + "'s return hit the net and dropped on their own side.");
+            }
             BeginFlight(shot.Flight);
         }
 
@@ -205,6 +228,13 @@ namespace BenchToBanner.Physics
         {
             _flight = flight;
             _k = 0;
+            if (NetFault)
+            {
+                // The ball hit the net: nobody plays it, everyone stands still until it lands.
+                _plan = new InterceptPlan();
+                CommitAll(0.0);
+                return;
+            }
             _plan = InterceptPlanner.Plan(flight, Players, Court, Intercept);
 
             if (_plan.Feasible)

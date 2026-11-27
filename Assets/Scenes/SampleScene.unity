@@ -209,7 +209,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -306,7 +306,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -578,7 +578,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -631,11 +631,15 @@ MonoBehaviour:
   - {fileID: 44925267}
   serveTarget: {fileID: 0}
   serveFlightTime: 3
-  returnFlightTime: 1.5
+  returnFlightTimeMin: 0.9
+  returnFlightTimeMax: 3.5
   autoStart: 1
+  randomizeSeed: 1
   seed: 12345
+  netStopsBall: 1
   maxContacts: 200
   womenNet: 1
+  chaseUntilItLands: 1
 --- !u!4 &578389183
 Transform:
   m_ObjectHideFlags: 0
@@ -741,7 +745,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -838,7 +842,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -862,20 +866,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 436275a13d4459746955fc6db5953473, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FreeFlyCamera
-  _active: 1
-  _enableRotation: 1
-  _mouseSense: 1.8
-  _enableTranslation: 1
-  _translationSpeed: 55
-  _enableMovement: 1
-  _movementSpeed: 10
-  _boostedSpeed: 50
-  _boostSpeed: 304
-  _moveUp: 101
-  _moveDown: 113
-  _enableSpeedAcceleration: 1
-  _speedAccelerationFactor: 1.5
-  _initPositonButton: 114
 --- !u!114 &758450923
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1016,7 +1006,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -1176,7 +1166,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -1563,7 +1553,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -1660,7 +1650,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -1800,7 +1790,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -1897,7 +1887,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0
@@ -1994,7 +1984,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 04d14d72d70f99a4d909fb5c72f5009b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: BenchToBanner.Runtime::BenchToBanner.Runtime.PlayerRunner
-  maxSpeed: 1
+  maxSpeed: 2
   reactionTime: 0.3
   reachRadius: 0.6
   footOffset: 0

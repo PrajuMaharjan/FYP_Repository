@@ -20,6 +20,17 @@ namespace BenchToBanner.Physics
         /// </summary>
         public double FixedFlightTime = 0.0;
         /// <summary>
+        /// If MaxFlightTime is greater than zero, every return draws its own flight time from
+        /// MinFlightTime..MaxFlightTime (seconds), so arcs differ from return to return. Takes priority over FixedFlightTime.
+        /// </summary>
+        public double MinFlightTime = 0.0;
+        public double MaxFlightTime = 0.0;
+        /// <summary>
+        /// If true, the net is an obstacle: a return whose arc does not clear the tape HITS the net, stops there and drops
+        /// on the hitter's side (ReturnShot.HitsNet). If false, only arcs that clear the net are ever chosen.
+        /// </summary>
+        public bool NetCollides = false;
+        /// <summary>
         /// Reject shots that need a launch faster than this (m/s). The default suits the normal arcs; a 5 s
         /// flight needs about 45 m/s because of air drag, so raise this when using FixedFlightTime.
         /// </summary>
@@ -35,6 +46,8 @@ namespace BenchToBanner.Physics
         public bool Found;
         /// <summary>True when the fixed flight time could not give a legal shot and a normal arc was used instead.</summary>
         public bool UsedFallback;
+        /// <summary>The arc did not clear the net. Flight is the ball hitting it and dropping on the hitter's side.</summary>
+        public bool HitsNet;
         public Vec3d Target;
         public LaunchSolution Solution;
         public TrajectoryResult Flight;
@@ -50,6 +63,8 @@ namespace BenchToBanner.Physics
         public static ReturnShot Plan(Vec3d contact, int targetSide, CourtSpec court, BallPhysicsConfig cfg,
                                       DeterministicRng rng, ReturnRules rules)
         {
+            if (rules.NetCollides) return PlanWithNet(contact, targetSide, court, cfg, rng, rules);
+
             if (rules.FixedFlightTime > 0.0)
             {
                 ReturnShot fixedShot = Search(contact, targetSide, court, cfg, rng, rules, true);
@@ -62,6 +77,55 @@ namespace BenchToBanner.Physics
                 return fallback;
             }
             return Search(contact, targetSide, court, cfg, rng, rules, false);
+        }
+
+        /// <summary>
+        /// Net-as-obstacle mode: pick a random target and flight time; if that arc does not clear the net the
+        /// ball hits it (the rally will end), otherwise it is a normal return.
+        /// </summary>
+        private static ReturnShot PlanWithNet(Vec3d contact, int targetSide, CourtSpec court, BallPhysicsConfig cfg,
+                                              DeterministicRng rng, ReturnRules rules)
+        {
+            ReturnShot shot = new ReturnShot();
+            bool randomTime = rules.MaxFlightTime > 0.0;
+            bool fixedTime = !randomTime && rules.FixedFlightTime > 0.0;
+            double xMin = rules.MinTargetDistanceFromNet;
+            double xMax = court.HalfLength - rules.LineMargin;
+            double zMax = court.HalfWidth - rules.LineMargin;
+
+            for (int attempt = 0; attempt < rules.Attempts; attempt++)
+            {
+                double x = targetSide * rng.Range(xMin, xMax);
+                double z = rng.Range(-zMax, zMax);
+                double rise = rng.Range(rules.MinApexRise, rules.MaxApexRise);
+                double time = randomTime ? rng.Range(rules.MinFlightTime, rules.MaxFlightTime) : rules.FixedFlightTime;
+
+                Vec3d target = new Vec3d(x, cfg.Radius, z);
+                LaunchSolution sol = (randomTime || fixedTime)
+                    ? LaunchSolver.SolveByFlightTime(contact, target, time, cfg)
+                    : LaunchSolver.SolveByApexRise(contact, target, rise, cfg);
+                if (!sol.Converged) continue;
+                if (sol.Speed > rules.MaxLaunchSpeed) continue;
+
+                TrajectoryResult flight = TrajectorySimulator.Simulate(contact, sol.Velocity, cfg);
+                if (!flight.Landed) continue;
+
+                bool hit;
+                TrajectoryResult after = NetCollision.Apply(flight, court, cfg, out hit);
+                if (!hit)
+                {
+                    if (!court.IsInCourt(flight.LandingPosition)) continue;
+                    if (court.SideOf(flight.LandingPosition) != targetSide) continue;
+                }
+
+                shot.Found = true;
+                shot.HitsNet = hit;
+                shot.Target = target;
+                shot.Solution = sol;
+                shot.Flight = after;
+                return shot;
+            }
+            return shot;
         }
 
         private static ReturnShot Search(Vec3d contact, int targetSide, CourtSpec court, BallPhysicsConfig cfg,

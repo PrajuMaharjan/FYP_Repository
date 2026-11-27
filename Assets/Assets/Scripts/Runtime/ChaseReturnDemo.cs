@@ -40,13 +40,18 @@ namespace BenchToBanner.Runtime
         [Header("Flight times (seconds)")]
         [Tooltip("How long the serve is in the air. 5 s is a very high, slow arc (about 30 m).")]
         [SerializeField] private float serveFlightTime = 5f;
-        [Tooltip("How long every return is in the air. Set to 0 to use normal-looking arcs of random height instead.")]
-        [SerializeField] private float returnFlightTime = 5f;
+        [Tooltip("Each return takes a random time between Min and Max, so the arcs differ. Short times are flat and fast and may hit the net. Set Max to 0 to use normal-looking arcs of random height instead.")]
+        [SerializeField] private float returnFlightTimeMin = 1.5f;
+        [SerializeField] private float returnFlightTimeMax = 5f;
         [SerializeField] private bool autoStart = true;
 
         [Header("Rally")]
-        [Tooltip("Same seed = same rally every time.")]
+        [Tooltip("Tick: a new random seed every time the rally starts, so every rally is different. The seed used is printed in the Console. Untick to use the Seed below.")]
+        [SerializeField] private bool randomizeSeed = true;
+        [Tooltip("Same seed = same rally every time (only used when Randomize Seed is off). To replay a rally you liked, copy the seed from the Console.")]
         [SerializeField] private int seed = 12345;
+        [Tooltip("The net is an obstacle: a return that does not clear the net tape hits it and drops on the hitter's side, and the rally ends.")]
+        [SerializeField] private bool netStopsBall = true;
         [Tooltip("The rally stops after this many returns.")]
         [SerializeField] private int maxContacts = 200;
         [Tooltip("Use the women's net height (2.24 m) instead of the men's (2.43 m).")]
@@ -66,6 +71,7 @@ namespace BenchToBanner.Runtime
         private Vec3d _currBall;
         private int _logIndex;
         private bool _running;
+        private int _activeSeed;
         private string _status = "";
 
         private void Awake()
@@ -131,15 +137,20 @@ namespace BenchToBanner.Runtime
                                            players[i].MaxSpeed, players[i].ReactionTime, players[i].ReachRadius));
             }
 
+            _activeSeed = randomizeSeed ? (System.Environment.TickCount ^ System.Guid.NewGuid().GetHashCode()) & 0x7FFFFFFF : seed;
+
             ReturnRules rules = new ReturnRules();
-            if (returnFlightTime > 0f)
+            rules.NetCollides = netStopsBall;
+            bool randomTimes = returnFlightTimeMax > 0f;
+            if (randomTimes)
             {
-                rules.FixedFlightTime = returnFlightTime;
+                rules.MinFlightTime = System.Math.Min(returnFlightTimeMin, returnFlightTimeMax);
+                rules.MaxFlightTime = returnFlightTimeMax;
                 rules.MaxLaunchSpeed = 80.0; // a 5 s flight needs about 45 m/s; the default cap is for normal arcs
             }
 
             _sim = new ChaseReturnSim(_config, _court, agents, new InterceptSettings(), rules,
-                                      unchecked((ulong)(uint)seed));
+                                      unchecked((ulong)(uint)_activeSeed));
             _sim.MaxContacts = maxContacts;
             _sim.ChaseWhenUnreachable = chaseUntilItLands;
 
@@ -154,7 +165,7 @@ namespace BenchToBanner.Runtime
             }
             else
             {
-                DeterministicRng rng = new DeterministicRng(unchecked((ulong)(uint)seed) ^ 0xC0FFEEUL);
+                DeterministicRng rng = new DeterministicRng(unchecked((ulong)(uint)_activeSeed) ^ 0xC0FFEEUL);
                 serveTo = new Vec3d(-servingSide * rng.Range(2.0, _court.HalfLength - 1.0), _config.Radius,
                                     rng.Range(-3.5, 3.5));
             }
@@ -173,7 +184,8 @@ namespace BenchToBanner.Runtime
             _status = "Rally running";
             ProcessEvents();
             Debug.Log("ChaseReturnDemo: serve aimed at world " + ToWorld(serveTo) + ", flight time " + serveFlightTime +
-                      " s, returns " + (returnFlightTime > 0f ? returnFlightTime + " s each" : "normal arcs") + " (seed " + seed + ").");
+                      " s, returns " + (randomTimes ? "random " + rules.MinFlightTime + "-" + rules.MaxFlightTime + " s each" : "normal arcs") +
+                      " (seed " + _activeSeed + (randomizeSeed ? ": put this in Seed and untick Randomize Seed to replay this rally" : "") + ").");
         }
 
         private void Update()
@@ -223,6 +235,10 @@ namespace BenchToBanner.Runtime
                         break;
                     case SimEventType.BallUnreachable:
                         _status = chaseUntilItLands ? "Ball out of reach: closest player chases it anyway" : "Ball unreachable: all players stopped";
+                        Debug.Log("ChaseReturnDemo: " + e.Text);
+                        break;
+                    case SimEventType.NetHit:
+                        _status = "Net! The ball hit the net";
                         Debug.Log("ChaseReturnDemo: " + e.Text);
                         break;
                     case SimEventType.RallyOver:
