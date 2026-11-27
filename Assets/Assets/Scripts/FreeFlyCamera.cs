@@ -4,7 +4,7 @@ using UnityEngine.InputSystem;
 #endif
 
 namespace BenchToBanner.CameraTools
-{
+{ 
     /// <summary>
     /// A free-flying observation camera, like Unity's Scene view. Put it on the Main Camera.
     ///

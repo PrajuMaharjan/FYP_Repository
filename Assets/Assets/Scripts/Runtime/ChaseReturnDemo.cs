@@ -51,6 +51,8 @@ namespace BenchToBanner.Runtime
         [SerializeField] private int maxContacts = 200;
         [Tooltip("Use the women's net height (2.24 m) instead of the men's (2.43 m).")]
         [SerializeField] private bool womenNet = false;
+        [Tooltip("When nobody can reach the ball in time, the closest player keeps running at it until it hits the floor. Untick to make everyone stop instead.")]
+        [SerializeField] private bool chaseUntilItLands = true;
 
         private BallPhysicsConfig _config;
         private CourtSpec _court;
@@ -139,6 +141,7 @@ namespace BenchToBanner.Runtime
             _sim = new ChaseReturnSim(_config, _court, agents, new InterceptSettings(), rules,
                                       unchecked((ulong)(uint)seed));
             _sim.MaxContacts = maxContacts;
+            _sim.ChaseWhenUnreachable = chaseUntilItLands;
 
             // Serve from the ball's start position to the other side of the net.
             Vec3d serveFrom = ToSim(_ballStart);
@@ -216,10 +219,11 @@ namespace BenchToBanner.Runtime
                         players[e.Player].FaceNet();
                         _status = "Return #" + _sim.ContactCount + " by " + players[e.Player].name;
                         Debug.Log("ChaseReturnDemo: return #" + _sim.ContactCount + " by '" + players[e.Player].name + "'.");
+                        if (e.Fallback) Debug.LogWarning("ChaseReturnDemo: " + e.Text);
                         break;
                     case SimEventType.BallUnreachable:
-                        _status = "Ball unreachable: all players stopped";
-                        Debug.Log("ChaseReturnDemo: nobody can get under the ball. All players stop.");
+                        _status = chaseUntilItLands ? "Ball out of reach: closest player chases it anyway" : "Ball unreachable: all players stopped";
+                        Debug.Log("ChaseReturnDemo: " + e.Text);
                         break;
                     case SimEventType.RallyOver:
                         _status = "Rally over: " + e.Text + " (" + _sim.ContactCount + " returns)";

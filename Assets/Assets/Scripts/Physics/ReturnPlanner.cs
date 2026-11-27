@@ -15,6 +15,8 @@ namespace BenchToBanner.Physics
         /// <summary>
         /// If greater than zero, every return takes exactly this many seconds (a slow, very high arc for
         /// long values: 5 s peaks around 30 m). If zero, the arc height is drawn from MinApexRise..MaxApexRise instead.
+        /// A short fixed time cannot always clear the net from every contact point; in that case the planner
+        /// falls back to a normal arc for that one return (see ReturnShot.UsedFallback) instead of giving up.
         /// </summary>
         public double FixedFlightTime = 0.0;
         /// <summary>
@@ -24,13 +26,15 @@ namespace BenchToBanner.Physics
         public double MaxLaunchSpeed = 25.0;
         /// <summary>Ball bottom must clear the net tape by at least this much (m).</summary>
         public double NetClearance = 0.15;
-        /// <summary>How many random targets to try before giving up.</summary>
+        /// <summary>How many random targets to try (per pass) before giving up.</summary>
         public int Attempts = 40;
     }
 
     public struct ReturnShot
     {
         public bool Found;
+        /// <summary>True when the fixed flight time could not give a legal shot and a normal arc was used instead.</summary>
+        public bool UsedFallback;
         public Vec3d Target;
         public LaunchSolution Solution;
         public TrajectoryResult Flight;
@@ -46,6 +50,23 @@ namespace BenchToBanner.Physics
         public static ReturnShot Plan(Vec3d contact, int targetSide, CourtSpec court, BallPhysicsConfig cfg,
                                       DeterministicRng rng, ReturnRules rules)
         {
+            if (rules.FixedFlightTime > 0.0)
+            {
+                ReturnShot fixedShot = Search(contact, targetSide, court, cfg, rng, rules, true);
+                if (fixedShot.Found) return fixedShot;
+
+                // The fixed time is too short to clear the net from this contact point. Use a normal arc
+                // for this one return rather than ending the rally with the ball hanging in the air.
+                ReturnShot fallback = Search(contact, targetSide, court, cfg, rng, rules, false);
+                fallback.UsedFallback = fallback.Found;
+                return fallback;
+            }
+            return Search(contact, targetSide, court, cfg, rng, rules, false);
+        }
+
+        private static ReturnShot Search(Vec3d contact, int targetSide, CourtSpec court, BallPhysicsConfig cfg,
+                                         DeterministicRng rng, ReturnRules rules, bool useFixedFlightTime)
+        {
             ReturnShot shot = new ReturnShot();
             double xMin = rules.MinTargetDistanceFromNet;
             double xMax = court.HalfLength - rules.LineMargin;
@@ -59,7 +80,7 @@ namespace BenchToBanner.Physics
                 double rise = rng.Range(rules.MinApexRise, rules.MaxApexRise); // drawn even if unused, keeps the sequence stable
 
                 Vec3d target = new Vec3d(x, cfg.Radius, z);
-                LaunchSolution sol = rules.FixedFlightTime > 0.0
+                LaunchSolution sol = useFixedFlightTime
                     ? LaunchSolver.SolveByFlightTime(contact, target, rules.FixedFlightTime, cfg)
                     : LaunchSolver.SolveByApexRise(contact, target, rise, cfg);
                 if (!sol.Converged) continue;

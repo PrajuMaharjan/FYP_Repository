@@ -309,6 +309,58 @@ namespace BenchToBanner.Physics.Tests
         }
 
         [Test]
+        public void Unreachable_WithChase_OnlyTheClosestPlayerRunsAtTheLandingSpot_UntilTheBallLands()
+        {
+            ChaseReturnSim probe = new ChaseReturnSim(Cfg, Court, Team(0.5), null, null, 1); // too slow to ever get there
+            Vec3d[] start = new Vec3d[probe.Players.Count];
+            for (int i = 0; i < start.Length; i++) start[i] = probe.Players[i].Position;
+
+            ChaseReturnSim chase = new ChaseReturnSim(Cfg, Court, Team(0.5), null, null, 1);
+            chase.ChaseWhenUnreachable = true;
+            Assert.IsTrue(chase.Serve(ServeStart, ServeTarget, 1.2));
+            SimEventInfo u = chase.Log.Find(e => e.Type == SimEventType.BallUnreachable);
+            Assert.IsTrue(u.Player >= 0, "somebody should chase");
+            Assert.IsFalse(chase.PlayersFrozen);
+
+            // Closest player to the landing spot (5, 2) on side +1 is the one at (6, 3).
+            Assert.AreEqual(5, u.Player);
+
+            int guard = 0;
+            double moved = 0.0;
+            while (chase.Step())
+            {
+                guard++;
+                Assert.Less(guard, 2000000);
+                for (int i = 0; i < start.Length; i++)
+                {
+                    bool same = chase.PlayerPosition(i).BitwiseEquals(start[i]);
+                    if (i == u.Player) { if (!same) moved = 1.0; }
+                    else Assert.IsTrue(same, "player " + i + " moved but is not the chaser");
+                }
+            }
+            Assert.AreEqual(1.0, moved, "the chaser should have moved");
+            Assert.IsTrue(chase.RallyOver);
+            Assert.AreEqual(0, chase.ContactCount);
+            Assert.IsTrue(chase.EndReason.Contains("hit the floor"), chase.EndReason);
+        }
+
+        [Test]
+        public void Unreachable_WithChase_ChaserNeverGetsThereButRunsStraightAtTheLandingSpot()
+        {
+            ChaseReturnSim sim = new ChaseReturnSim(Cfg, Court, Team(0.5), null, null, 1);
+            sim.ChaseWhenUnreachable = true;
+            Assert.IsTrue(sim.Serve(ServeStart, ServeTarget, 1.2));
+            int c = sim.Log.Find(e => e.Type == SimEventType.BallUnreachable).Player;
+            Vec3d from = sim.Players[c].Position;
+            RunToEnd(sim);
+            Vec3d end = sim.Players[c].Position;
+            double before = PlayerAgent.Distance2D(from, sim.Log[sim.Log.Count - 1].BallPosition);
+            double after = PlayerAgent.Distance2D(end, sim.Log[sim.Log.Count - 1].BallPosition);
+            Assert.Less(after, before, "chaser should end closer to where the ball landed");
+            Assert.Greater(after, 0.6, "chaser was supposed to be too slow");
+        }
+
+        [Test]
         public void Unreachable_MidRally_EveryPlayerStopsAndStaysStopped()
         {
             // At 3 m/s some returns cannot be reached. Find rallies (fixed seeds) that return at least once
@@ -505,6 +557,84 @@ namespace BenchToBanner.Physics.Tests
                 count++;
             }
             Assert.AreEqual(8, count);
+        }
+
+        // ---------------------------------------------------------------- short fixed flight times, and explaining endings
+
+        [Test]
+        public void ReturnPlanner_ShortFixedFlightTime_FallsBackToANormalArc_InsteadOfFailing()
+        {
+            // From this contact point a 1.0 s return cannot clear the net.
+            Vec3d contact = new Vec3d(3.3, 1.0, 0.9);
+            ReturnRules rules = new ReturnRules();
+            rules.FixedFlightTime = 1.0;
+            rules.MaxLaunchSpeed = 80.0;
+
+            ReturnShot shot = ReturnPlanner.Plan(contact, -1, Court, Cfg, new DeterministicRng(12345), rules);
+            Assert.IsTrue(shot.Found, "should still produce a return");
+            Assert.IsTrue(shot.UsedFallback, "should say it had to fall back");
+            Assert.IsTrue(shot.Flight.CrossesNetLegally(Court, Cfg, rules.NetClearance));
+            Assert.AreEqual(-1, Court.SideOf(shot.Flight.LandingPosition));
+
+            // A 5 s return from the same spot is fine as it is: no fallback.
+            rules.FixedFlightTime = 5.0;
+            ReturnShot normal = ReturnPlanner.Plan(contact, -1, Court, Cfg, new DeterministicRng(12345), rules);
+            Assert.IsTrue(normal.Found);
+            Assert.IsFalse(normal.UsedFallback);
+        }
+
+        [Test]
+        public void Rally_WithAShortFixedReturnTime_NeverStopsBecauseNoLegalReturnWasFound()
+        {
+            for (ulong seed = 1; seed <= 8; seed++)
+            {
+                ReturnRules rules = new ReturnRules();
+                rules.FixedFlightTime = 1.0;
+                rules.MaxLaunchSpeed = 80.0;
+                ChaseReturnSim sim = new ChaseReturnSim(Cfg, Court, SixPerSide(4.5), null, rules, seed);
+                Assert.IsTrue(sim.Serve(ServeStart, ServeTarget, 5.0));
+                sim.MaxContacts = 30;
+                RunToEnd(sim);
+
+                Assert.IsFalse(sim.EndReason.StartsWith("No legal return"), "seed " + seed + " froze mid-air: " + sim.EndReason);
+                Assert.GreaterOrEqual(sim.ContactCount, 2, "seed " + seed + " should get past the first return");
+                Assert.IsTrue(sim.Log.Exists(e => e.Type == SimEventType.Contact && e.Fallback), "seed " + seed + ": expected at least one fallback");
+            }
+        }
+
+        [Test]
+        public void Unreachable_Message_SaysWhereTheBallComesDown_AndHowFarThePlayersAre()
+        {
+            // Slow players, serve lands inside the court but out of reach.
+            ChaseReturnSim slow = NewSim(1, 0.5);
+            SimEventInfo u = slow.Log.Find(e => e.Type == SimEventType.BallUnreachable);
+            Assert.IsTrue(u.Text != null && u.Text.Length > 0, "no explanation recorded");
+            Assert.IsTrue(u.Text.Contains("inside the court lines"), u.Text);
+            Assert.IsTrue(u.Text.Contains("best-placed player"), u.Text);
+            Assert.IsTrue(u.Text.Contains("can only cover"), u.Text);
+
+            // The numbers quoted must agree with the verdict: distance to the spot is MORE than what the player can cover.
+            double dist = ParseNumberAfter(u.Text, "player is ");
+            double cover = ParseNumberAfter(u.Text, "can only cover ");
+            Assert.Greater(dist, cover - 0.051, "message says the player was close enough: " + u.Text); // 0.05 = 1-decimal rounding
+
+            // Serve far outside the court.
+            LaunchSolution sol = LaunchSolver.SolveByFlightTime(ServeStart, new Vec3d(15.0, 0.105, 0.0), 1.4, Cfg);
+            ChaseReturnSim far = new ChaseReturnSim(Cfg, Court, Team(9.0), null, null, 1);
+            far.StartFlight(ServeStart, sol.Velocity);
+            SimEventInfo f = far.Log.Find(e => e.Type == SimEventType.BallUnreachable);
+            Assert.IsTrue(f.Text.Contains("OUTSIDE the court lines"), f.Text);
+            Assert.IsTrue(f.Text.Contains("too far outside"), f.Text);
+        }
+
+        private static double ParseNumberAfter(string text, string marker)
+        {
+            int i = text.IndexOf(marker, StringComparison.Ordinal);
+            Assert.IsTrue(i >= 0, "marker '" + marker + "' not found in: " + text);
+            i += marker.Length;
+            int j = i;
+            while (j < text.Length && (char.IsDigit(text[j]) || text[j] == '.' || text[j] == '-')) j++;
+            return double.Parse(text.Substring(i, j - i), System.Globalization.CultureInfo.InvariantCulture);
         }
 
         // ---------------------------------------------------------------- determinism
