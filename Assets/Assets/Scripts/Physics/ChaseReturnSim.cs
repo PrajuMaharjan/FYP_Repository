@@ -26,6 +26,9 @@ namespace BenchToBanner.Physics
         public string Text;
         /// <summary>On a Contact: the fixed return flight time could not clear the net, so a normal arc was used.</summary>
         public bool Fallback;
+        /// <summary>On a Contact: which touch this was for the team (1, 2 or 3), and how many the team gets.</summary>
+        public int Touch;
+        public int TouchesAllowed;
     }
 
     /// <summary>
@@ -58,12 +61,23 @@ namespace BenchToBanner.Physics
         /// </summary>
         public bool ChaseWhenUnreachable = false;
 
+        /// <summary>
+        /// How many touches a team takes before the ball goes back over the net. 1 = the receiver returns it straight
+        /// away (the original demo). 2 = pass, then attack. 3 = pass, set, attack. Nobody touches twice in a row.
+        /// </summary>
+        public int TouchesPerSide = 1;
+        /// <summary>Where the pass and the set are aimed (only used when TouchesPerSide is 2 or 3).</summary>
+        public TouchRules Touch = new TouchRules();
+
         private readonly DeterministicRng _rng;
         private TrajectoryResult _flight;
         private InterceptPlan _plan;
         private int _k;          // current step within the current flight
         private int _step;       // steps since the first serve
         private bool _started;
+        private int _lastToucher = -1;   // player who made the latest contact (cannot play the ball next)
+        private int _possessionSide;     // side currently making its touches (0 = none yet)
+        private int _touches;            // touches made by that side so far
         private ulong _hash = 14695981039346656037UL;
 
         public bool RallyOver { get; private set; }
@@ -187,41 +201,73 @@ namespace BenchToBanner.Physics
             CommitAll(t);
             ContactCount++;
 
-            bool capped = ContactCount >= MaxContacts;
-            ReturnShot shot = capped ? new ReturnShot() : ReturnPlanner.Plan(ballPos, -side, Court, Config, _rng, Rules);
+            // Touch bookkeeping: a new side gets a fresh count.
+            if (side != _possessionSide) { _possessionSide = side; _touches = 0; }
+            _touches++;
+            int allowed = Math.Max(1, Math.Min(3, TouchesPerSide));
+            int touch = _touches;
+            bool crossesNet = touch >= allowed;     // the last touch sends it over
+            _lastToucher = idx;
 
-            string text = "Player " + idx + " returned the ball.";
+            bool capped = ContactCount >= MaxContacts;
+            ReturnShot shot = new ReturnShot();
+            TouchShot pass = new TouchShot();
+            if (!capped)
+            {
+                if (crossesNet) shot = ReturnPlanner.Plan(ballPos, -side, Court, Config, _rng, Rules);
+                else pass = TouchPlanner.Plan(ballPos, side, touch, idx, Players, Court, Config, Intercept, _rng, Touch);
+            }
+
+            string text = allowed == 1
+                ? "Player " + idx + " returned the ball."
+                : "Player " + idx + " made touch " + touch + " of " + allowed + " (" + TouchName(touch, allowed) + ").";
             if (shot.Found && shot.UsedFallback)
             {
                 text += " The fixed return flight time (" + Rules.FixedFlightTime.ToString("0.##", CultureInfo.InvariantCulture) +
                         " s) was too short to clear the net from here, so a normal arc was used for this return.";
             }
             AddEvent(SimEventType.Contact, idx, ballPos, playerPos, text);
-            Log[Log.Count - 1] = WithFallback(Log[Log.Count - 1], shot.Found && shot.UsedFallback);
+            SimEventInfo ev = Log[Log.Count - 1];
+            ev.Fallback = shot.Found && shot.UsedFallback;
+            ev.Touch = touch;
+            ev.TouchesAllowed = allowed;
+            Log[Log.Count - 1] = ev;
 
             if (capped)
             {
                 Finish("Maximum number of contacts reached.");
                 return;
             }
-            if (!shot.Found)
+            if (crossesNet)
             {
-                Finish("No legal return was found from that contact point (the ball cannot clear the net from there).");
-                return;
+                if (!shot.Found)
+                {
+                    Finish("No legal return was found from that contact point (the ball cannot clear the net from there).");
+                    return;
+                }
+                if (shot.HitsNet)
+                {
+                    NetFault = true;
+                    AddEvent(SimEventType.NetHit, idx, ballPos, playerPos,
+                             "Player " + idx + "'s return hit the net and dropped on their own side.");
+                }
+                BeginFlight(shot.Flight);
             }
-            if (shot.HitsNet)
+            else
             {
-                NetFault = true;
-                AddEvent(SimEventType.NetHit, idx, ballPos, playerPos,
-                         "Player " + idx + "'s return hit the net and dropped on their own side.");
+                if (!pass.Found)
+                {
+                    Finish("No legal " + TouchName(touch, allowed) + " was found from that contact point.");
+                    return;
+                }
+                BeginFlight(pass.Flight);
             }
-            BeginFlight(shot.Flight);
         }
 
-        private static SimEventInfo WithFallback(SimEventInfo e, bool fallback)
+        private static string TouchName(int touch, int allowed)
         {
-            e.Fallback = fallback;
-            return e;
+            if (touch >= allowed) return "attack";
+            return touch == 1 ? "pass" : "set";
         }
 
         private void BeginFlight(TrajectoryResult flight)
@@ -235,7 +281,7 @@ namespace BenchToBanner.Physics
                 CommitAll(0.0);
                 return;
             }
-            _plan = InterceptPlanner.Plan(flight, Players, Court, Intercept);
+            _plan = InterceptPlanner.Plan(flight, Players, Court, Intercept, _lastToucher);
 
             if (_plan.Feasible)
             {
@@ -271,7 +317,7 @@ namespace BenchToBanner.Physics
             double bestD = double.MaxValue;
             for (int i = 0; i < Players.Count; i++)
             {
-                if (Players[i].Side != side) continue;
+                if (Players[i].Side != side || i == _lastToucher) continue;
                 double d = PlayerAgent.Distance2D(Players[i].Position, land);
                 if (d < bestD) { bestD = d; best = i; }
             }
@@ -323,7 +369,7 @@ namespace BenchToBanner.Physics
             for (int i = 0; i < Players.Count; i++)
             {
                 PlayerAgent p = Players[i];
-                if (p.Side != side) continue;
+                if (p.Side != side || i == _lastToucher) continue;
                 double d = PlayerAgent.Distance2D(p.Position, spot);
                 double c = p.MaxSpeed * Math.Max(0.0, when - p.ReactionTime) + p.Reach;
                 double shortfall = d - c;

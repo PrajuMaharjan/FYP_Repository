@@ -32,10 +32,20 @@ namespace BenchToBanner.Runtime
         [SerializeField] private Transform ball;
         [Tooltip("Your floor object (cube or plane). The ball lands on, and characters stand on, the TOP of what you can see.")]
         [SerializeField] private Transform floor;
-        [Tooltip("Every character taking part, both teams. Each needs a PlayerRunner.")]
+        [Tooltip("Every character taking part, both teams. Each needs a PlayerRunner. Only needed if you do NOT assign the two Team objects below.")]
         [SerializeField] private PlayerRunner[] players;
         [Tooltip("Optional. Where the serve should land. Leave empty to use a seeded random spot.")]
         [SerializeField] private Transform serveTarget;
+
+        [Header("Teams (optional: easier than filling the Players list)")]
+        [Tooltip("The empty object that holds Team 1's characters. Every PlayerRunner under it joins Team 1. Team 1 must start on one side of the net, Team 2 on the other.")]
+        [SerializeField] private Transform teamOne;
+        [Tooltip("The empty object that holds Team 2's characters.")]
+        [SerializeField] private Transform teamTwo;
+        [Tooltip("Colour each team's characters. It tints their materials, so it can look odd on textured models; leave off if it does.")]
+        [SerializeField] private bool tintTeams = false;
+        [SerializeField] private Color teamOneColor = new Color(0.9f, 0.3f, 0.3f);
+        [SerializeField] private Color teamTwoColor = new Color(0.3f, 0.5f, 0.95f);
 
         [Header("Flight times (seconds)")]
         [Tooltip("How long the serve is in the air. 5 s is a very high, slow arc (about 30 m).")]
@@ -50,6 +60,9 @@ namespace BenchToBanner.Runtime
         [SerializeField] private bool randomizeSeed = true;
         [Tooltip("Same seed = same rally every time (only used when Randomize Seed is off). To replay a rally you liked, copy the seed from the Console.")]
         [SerializeField] private int seed = 12345;
+        [Tooltip("Touches a team takes before the ball goes back over the net. 3 = pass, set, attack. 1 = return it straight away. Nobody touches twice in a row.")]
+        [Range(1, 3)]
+        [SerializeField] private int touchesPerSide = 3;
         [Tooltip("The net is an obstacle: a return that does not clear the net tape hits it and drops on the hitter's side, and the rally ends.")]
         [SerializeField] private bool netStopsBall = true;
         [Tooltip("The rally stops after this many returns.")]
@@ -71,6 +84,9 @@ namespace BenchToBanner.Runtime
         private Vec3d _currBall;
         private int _logIndex;
         private bool _running;
+        private PlayerRunner[] _all;     // every character taking part (from the Team objects, or the Players list)
+        private string[] _teamLabel;     // per character: the name of its Team object, or null
+        private int[] _teamIndex;        // per character: 0 = teamOne, 1 = teamTwo, -1 = from the Players list
         private int _activeSeed;
         private string _status = "";
 
@@ -79,14 +95,15 @@ namespace BenchToBanner.Runtime
             _config = BallPhysicsConfig.Default;
             _court = womenNet ? CourtSpec.Women : CourtSpec.Men;
             _clock = new FixedStepClock(_config.TimeStep);
+            ResolvePlayers();
 
             if (ball != null) _ballStart = ball.position;
-            if (players != null)
+            if (_all != null)
             {
-                _playerStart = new Vector3[players.Length];
-                for (int i = 0; i < players.Length; i++)
+                _playerStart = new Vector3[_all.Length];
+                for (int i = 0; i < _all.Length; i++)
                 {
-                    if (players[i] != null) _playerStart[i] = players[i].transform.position;
+                    if (_all[i] != null) _playerStart[i] = _all[i].transform.position;
                 }
             }
         }
@@ -105,36 +122,39 @@ namespace BenchToBanner.Runtime
                 Debug.LogWarning("ChaseReturnDemo: assign the Ball.");
                 return;
             }
-            if (players == null || players.Length == 0)
+            if (_all == null || _all.Length == 0)
             {
-                Debug.LogWarning("ChaseReturnDemo: add your characters to the Players list.");
+                Debug.LogWarning("ChaseReturnDemo: assign the Team 1 and Team 2 objects (or add your characters to the Players list). No characters found.");
                 return;
             }
-            for (int i = 0; i < players.Length; i++)
+            for (int i = 0; i < _all.Length; i++)
             {
-                if (players[i] == null)
+                if (_all[i] == null)
                 {
                     Debug.LogWarning("ChaseReturnDemo: Players element " + i + " is empty.");
                     return;
                 }
             }
 
+            if (!ValidateTeams()) return;
+
             _floorY = ResolveFloorHeight();
             CheckBallSize();
+            if (tintTeams) TintTeams();
 
             // Back to the starting layout, standing on the floor.
             ball.position = _ballStart;
             List<PlayerAgent> agents = new List<PlayerAgent>();
-            for (int i = 0; i < players.Length; i++)
+            for (int i = 0; i < _all.Length; i++)
             {
                 Vector3 start = _playerStart[i];
-                players[i].transform.position = new Vector3(start.x, _floorY + players[i].FootOffset, start.z);
+                _all[i].transform.position = new Vector3(start.x, _floorY + _all[i].FootOffset, start.z);
                 if (Mathf.Abs(start.x) < 0.5f)
                 {
-                    Debug.LogWarning("ChaseReturnDemo: '" + players[i].name + "' starts within 0.5 m of the net; move it onto one side.");
+                    Debug.LogWarning("ChaseReturnDemo: '" + _all[i].name + "' starts within 0.5 m of the net; move it onto one side.");
                 }
-                agents.Add(new PlayerAgent(players[i].Side, new Vec3d(start.x, 0.0, start.z),
-                                           players[i].MaxSpeed, players[i].ReactionTime, players[i].ReachRadius));
+                agents.Add(new PlayerAgent(_all[i].Side, new Vec3d(start.x, 0.0, start.z),
+                                           _all[i].MaxSpeed, _all[i].ReactionTime, _all[i].ReachRadius));
             }
 
             _activeSeed = randomizeSeed ? (System.Environment.TickCount ^ System.Guid.NewGuid().GetHashCode()) & 0x7FFFFFFF : seed;
@@ -153,6 +173,7 @@ namespace BenchToBanner.Runtime
                                       unchecked((ulong)(uint)_activeSeed));
             _sim.MaxContacts = maxContacts;
             _sim.ChaseWhenUnreachable = chaseUntilItLands;
+            _sim.TouchesPerSide = touchesPerSide;
 
             // Serve from the ball's start position to the other side of the net.
             Vec3d serveFrom = ToSim(_ballStart);
@@ -210,11 +231,11 @@ namespace BenchToBanner.Runtime
 
         private void ApplyPlayers()
         {
-            for (int i = 0; i < players.Length; i++)
+            for (int i = 0; i < _all.Length; i++)
             {
                 Vec3d p = _sim.PlayerPosition(i);
                 Vec3d d = _sim.PlayerDirection(i);
-                players[i].Apply(new Vector3((float)p.X, _floorY + players[i].FootOffset, (float)p.Z),
+                _all[i].Apply(new Vector3((float)p.X, _floorY + _all[i].FootOffset, (float)p.Z),
                                  (float)_sim.PlayerSpeed(i),
                                  new Vector3((float)d.X, 0f, (float)d.Z));
             }
@@ -228,9 +249,12 @@ namespace BenchToBanner.Runtime
                 switch (e.Type)
                 {
                     case SimEventType.Contact:
-                        players[e.Player].FaceNet();
-                        _status = "Return #" + _sim.ContactCount + " by " + players[e.Player].name;
-                        Debug.Log("ChaseReturnDemo: return #" + _sim.ContactCount + " by '" + players[e.Player].name + "'.");
+                        _all[e.Player].FaceNet();
+                        string team = TeamName(e.Player);
+                        _status = e.TouchesAllowed > 1
+                            ? team + ": touch " + e.Touch + "/" + e.TouchesAllowed + " by " + _all[e.Player].name
+                            : team + ": return #" + _sim.ContactCount + " by " + _all[e.Player].name;
+                        Debug.Log("ChaseReturnDemo: " + team + ", contact #" + _sim.ContactCount + " by '" + _all[e.Player].name + "'. " + e.Text);
                         if (e.Fallback) Debug.LogWarning("ChaseReturnDemo: " + e.Text);
                         break;
                     case SimEventType.BallUnreachable:
@@ -245,6 +269,128 @@ namespace BenchToBanner.Runtime
                         _status = "Rally over: " + e.Text + " (" + _sim.ContactCount + " returns)";
                         Debug.Log("ChaseReturnDemo: rally over. " + e.Text + " Returns made: " + _sim.ContactCount + ".");
                         break;
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------ teams
+
+        /// <summary>Builds the list of characters: from the Team objects if given, otherwise from the Players list.</summary>
+        private void ResolvePlayers()
+        {
+            List<PlayerRunner> list = new List<PlayerRunner>();
+            List<string> labels = new List<string>();
+            List<int> teams = new List<int>();
+
+            if (teamOne != null || teamTwo != null)
+            {
+                AddTeam(teamOne, 0, list, labels, teams);
+                AddTeam(teamTwo, 1, list, labels, teams);
+                if (players != null && players.Length > 0)
+                {
+                    Debug.LogWarning("ChaseReturnDemo: the Team objects are assigned, so the Players list is ignored.");
+                }
+            }
+            else if (players != null)
+            {
+                for (int i = 0; i < players.Length; i++)
+                {
+                    list.Add(players[i]);
+                    labels.Add(null);
+                    teams.Add(-1);
+                }
+            }
+
+            _all = list.ToArray();
+            _teamLabel = labels.ToArray();
+            _teamIndex = teams.ToArray();
+        }
+
+        private static void AddTeam(Transform root, int teamIndex, List<PlayerRunner> list, List<string> labels, List<int> teams)
+        {
+            if (root == null) return;
+            PlayerRunner[] found = root.GetComponentsInChildren<PlayerRunner>();
+            for (int i = 0; i < found.Length; i++)
+            {
+                if (list.Contains(found[i])) continue; // already in the other team
+                list.Add(found[i]);
+                labels.Add(root.name);
+                teams.Add(teamIndex);
+            }
+        }
+
+        private string TeamName(int i)
+        {
+            if (_teamLabel != null && i >= 0 && i < _teamLabel.Length && !string.IsNullOrEmpty(_teamLabel[i])) return _teamLabel[i];
+            return _all[i].Side < 0 ? "Left team" : "Right team";
+        }
+
+        /// <summary>
+        /// A team is one side of the net. Every member of a Team object must start on the same side, and the two
+        /// teams on opposite sides. Prints exactly which character is wrong if not.
+        /// </summary>
+        private bool ValidateTeams()
+        {
+            if (teamOne == null && teamTwo == null) return true;
+
+            if (teamOne == null || teamTwo == null)
+            {
+                Debug.LogWarning("ChaseReturnDemo: only one Team object is assigned. Assign both Team 1 and Team 2.");
+                return false;
+            }
+
+            int[] side = new int[2];
+            int[] count = new int[2];
+            for (int i = 0; i < _all.Length; i++)
+            {
+                int t = _teamIndex[i];
+                if (t < 0) continue;
+                count[t]++;
+                if (side[t] == 0) side[t] = _all[i].Side;
+                else if (_all[i].Side != side[t])
+                {
+                    Debug.LogWarning("ChaseReturnDemo: '" + _all[i].name + "' is in '" + _teamLabel[i] + "' but starts on the other side of the net " +
+                                     "(world X = " + _all[i].transform.position.x.ToString("F1") + ") from its teammates. " +
+                                     "Move it so the whole team has the same sign of X. The net is at X = 0.");
+                    return false;
+                }
+            }
+            if (count[0] == 0 || count[1] == 0)
+            {
+                Debug.LogWarning("ChaseReturnDemo: " + (count[0] == 0 ? "'" + teamOne.name + "'" : "'" + teamTwo.name + "'") +
+                                 " has no characters with a PlayerRunner under it.");
+                return false;
+            }
+            if (side[0] == side[1])
+            {
+                Debug.LogWarning("ChaseReturnDemo: '" + teamOne.name + "' and '" + teamTwo.name + "' start on the same side of the net. " +
+                                 "One team must have X < 0 and the other X > 0.");
+                return false;
+            }
+            if (count[0] != count[1])
+            {
+                Debug.LogWarning("ChaseReturnDemo: the teams have different sizes (" + count[0] + " and " + count[1] + "). Playing anyway.");
+            }
+            Debug.Log("ChaseReturnDemo: '" + teamOne.name + "' (" + count[0] + " players) plays on the " + (side[0] < 0 ? "X < 0" : "X > 0") +
+                      " side, '" + teamTwo.name + "' (" + count[1] + " players) on the " + (side[1] < 0 ? "X < 0" : "X > 0") + " side.");
+            return true;
+        }
+
+        private void TintTeams()
+        {
+            if (teamOne == null && teamTwo == null) return;
+            MaterialPropertyBlock block = new MaterialPropertyBlock();
+            for (int i = 0; i < _all.Length; i++)
+            {
+                if (_teamIndex[i] < 0) continue;
+                Color c = _teamIndex[i] == 0 ? teamOneColor : teamTwoColor;
+                Renderer[] renderers = _all[i].GetComponentsInChildren<Renderer>(true);
+                for (int r = 0; r < renderers.Length; r++)
+                {
+                    renderers[r].GetPropertyBlock(block);
+                    block.SetColor("_BaseColor", c); // URP / HDRP shaders
+                    block.SetColor("_Color", c);     // built-in shaders
+                    renderers[r].SetPropertyBlock(block);
                 }
             }
         }

@@ -630,12 +630,18 @@ MonoBehaviour:
   - {fileID: 746560576}
   - {fileID: 44925267}
   serveTarget: {fileID: 0}
+  teamOne: {fileID: 1456238495}
+  teamTwo: {fileID: 2097511258}
+  tintTeams: 0
+  teamOneColor: {r: 0.9, g: 0.3, b: 0.3, a: 1}
+  teamTwoColor: {r: 0.3, g: 0.5, b: 0.95, a: 1}
   serveFlightTime: 3
   returnFlightTimeMin: 0.9
   returnFlightTimeMax: 3.5
   autoStart: 1
   randomizeSeed: 1
   seed: 12345
+  touchesPerSide: 3
   netStopsBall: 1
   maxContacts: 200
   womenNet: 1

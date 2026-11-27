@@ -810,5 +810,142 @@ namespace BenchToBanner.Physics.Tests
                 Assert.IsFalse(sim.NetFault);
             }
         }
+
+        // ---------------------------------------------------------------- three touches
+
+        private static ChaseReturnSim TouchSim(ulong seed, int touches, double speed = 4.5)
+        {
+            ReturnRules rules = NetRules(1.5, 4.0);
+            ChaseReturnSim sim = new ChaseReturnSim(Cfg, Court, SixPerSide(speed), null, rules, seed);
+            sim.TouchesPerSide = touches;
+            sim.MaxContacts = 200;
+            Assert.IsTrue(sim.Serve(ServeStart, ServeTarget, 1.2));
+            return sim;
+        }
+
+        [Test]
+        public void TouchPlanner_PassAndSet_StayOnTheHittersSide_AndSomeoneElseCanPlayThem()
+        {
+            List<PlayerAgent> team = SixPerSide(4.5);
+            DeterministicRng rng = new DeterministicRng(5);
+            TouchRules rules = new TouchRules();
+            InterceptSettings ic = new InterceptSettings();
+            for (int touch = 1; touch <= 2; touch++)
+            {
+                for (int i = 0; i < 25; i++)
+                {
+                    int hitter = 6; // a player on side +1 (indices 6..11)
+                    TouchShot shot = TouchPlanner.Plan(new Vec3d(5.0, 1.0, 1.0), 1, touch, hitter, team, Court, Cfg, ic, rng, rules);
+                    Assert.IsTrue(shot.Found);
+                    Assert.IsFalse(shot.Flight.CrossedNet, "a pass/set must not cross the net");
+                    Assert.IsTrue(Court.IsInCourt(shot.Flight.LandingPosition));
+                    Assert.Greater(shot.Flight.LandingPosition.X, 0.0);
+                    Assert.IsTrue(shot.Playable);
+                    InterceptPlan plan = InterceptPlanner.Plan(shot.Flight, team, Court, ic, hitter);
+                    Assert.IsTrue(plan.Feasible);
+                    Assert.AreNotEqual(hitter, plan.PlayerIndex);
+                }
+            }
+        }
+
+        [Test]
+        public void Intercept_NeverPicksTheExcludedPlayer_EvenIfTheyAreClosest()
+        {
+            List<PlayerAgent> team = SixPerSide(4.5);
+            TrajectoryResult f = ServeFlight(); // lands near (5, 2) on side +1
+            InterceptPlan open = InterceptPlanner.Plan(f, team, Court, new InterceptSettings(), -1);
+            Assert.IsTrue(open.Feasible);
+            InterceptPlan excl = InterceptPlanner.Plan(f, team, Court, new InterceptSettings(), open.PlayerIndex);
+            if (excl.Feasible) Assert.AreNotEqual(open.PlayerIndex, excl.PlayerIndex);
+        }
+
+        [Test]
+        public void ThreeTouches_FollowPassSetAttack_ThenTheOtherSideReceives()
+        {
+            int fullPossessions = 0;
+            for (ulong seed = 1; seed <= 40; seed++)
+            {
+                ChaseReturnSim sim = TouchSim(seed, 3);
+                RunToEnd(sim);
+                List<SimEventInfo> contacts = sim.Log.FindAll(e => e.Type == SimEventType.Contact);
+                int expectedTouch = 1;
+                int side = 0;
+                for (int i = 0; i < contacts.Count; i++)
+                {
+                    SimEventInfo c = contacts[i];
+                    int cs = sim.Players[c.Player].Side;
+                    if (expectedTouch == 1) side = cs; else Assert.AreEqual(side, cs, "touches 2 and 3 are by the same team as touch 1");
+                    Assert.AreEqual(expectedTouch, c.Touch);
+                    Assert.AreEqual(3, c.TouchesAllowed);
+                    if (i > 0) Assert.AreNotEqual(contacts[i - 1].Player, c.Player, "nobody touches twice in a row");
+                    if (expectedTouch == 3) { expectedTouch = 1; fullPossessions++; } else expectedTouch++;
+                }
+            }
+            Assert.Greater(fullPossessions, 20, "rallies should regularly complete pass-set-attack");
+        }
+
+        [Test]
+        public void ThreeTouches_FirstTwoStayOnTheSide_TheThirdGoesOver()
+        {
+            for (ulong seed = 1; seed <= 30; seed++)
+            {
+                ChaseReturnSim sim = TouchSim(seed, 3);
+                RunToEnd(sim);
+                List<SimEventInfo> contacts = sim.Log.FindAll(e => e.Type == SimEventType.Contact);
+                for (int i = 0; i + 1 < contacts.Count; i++)
+                {
+                    int sideNow = sim.Players[contacts[i].Player].Side;
+                    int sideNext = sim.Players[contacts[i + 1].Player].Side;
+                    if (contacts[i].Touch < 3) Assert.AreEqual(sideNow, sideNext, "touch " + contacts[i].Touch + " must stay on the side");
+                    else Assert.AreEqual(-sideNow, sideNext, "the attack must go to the other side");
+                }
+            }
+        }
+
+        [Test]
+        public void ThreeTouches_IsBitIdenticalForTheSameSeed_AndDiffersFromOneTouch()
+        {
+            ChaseReturnSim a = TouchSim(77, 3);
+            ChaseReturnSim b = TouchSim(77, 3);
+            ChaseReturnSim one = TouchSim(77, 1);
+            RunToEnd(a); RunToEnd(b); RunToEnd(one);
+            Assert.AreEqual(a.Fingerprint, b.Fingerprint);
+            Assert.AreNotEqual(a.Fingerprint, one.Fingerprint);
+        }
+
+        [Test]
+        public void TwoTouches_IsPassThenAttack()
+        {
+            ChaseReturnSim sim = TouchSim(3, 2);
+            RunToEnd(sim);
+            List<SimEventInfo> contacts = sim.Log.FindAll(e => e.Type == SimEventType.Contact);
+            Assert.GreaterOrEqual(contacts.Count, 1);
+            foreach (SimEventInfo c in contacts) Assert.AreEqual(2, c.TouchesAllowed);
+            Assert.AreEqual(1, contacts[0].Touch);
+        }
+
+        [Test]
+        public void ThreeTouches_WithOnlyOnePlayerPerSide_EndsAtTheFirstTouch_BecauseNobodyElseCanPlayThePass()
+        {
+            List<PlayerAgent> two = new List<PlayerAgent>();
+            two.Add(new PlayerAgent(-1, new Vec3d(-6.0, 0.0, 0.0), 4.5, 0.3, 0.6));
+            two.Add(new PlayerAgent(1, new Vec3d(6.0, 0.0, 0.0), 4.5, 0.3, 0.6));
+            ChaseReturnSim sim = new ChaseReturnSim(Cfg, Court, two, null, NetRules(1.5, 4.0), 1);
+            sim.TouchesPerSide = 3;
+            Assert.IsTrue(sim.Serve(new Vec3d(-10.0, 3.0, 0.0), new Vec3d(6.0, 0.105, 0.0), 1.2));
+            RunToEnd(sim);
+            Assert.AreEqual(1, sim.ContactCount);
+            Assert.IsTrue(sim.Log.Exists(e => e.Type == SimEventType.BallUnreachable));
+        }
+
+        [Test]
+        public void OneTouch_IsTheOriginalBehaviour_ContactsAlwaysAlternateSides()
+        {
+            ChaseReturnSim sim = TouchSim(11, 1);
+            RunToEnd(sim);
+            List<SimEventInfo> contacts = sim.Log.FindAll(e => e.Type == SimEventType.Contact);
+            for (int i = 0; i + 1 < contacts.Count; i++)
+                Assert.AreNotEqual(sim.Players[contacts[i].Player].Side, sim.Players[contacts[i + 1].Player].Side);
+        }
     }
 }

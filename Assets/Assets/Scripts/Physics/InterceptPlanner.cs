@@ -51,6 +51,16 @@ namespace BenchToBanner.Physics
         public static InterceptPlan Plan(TrajectoryResult flight, IList<PlayerAgent> players,
                                          CourtSpec court, InterceptSettings s)
         {
+            return Plan(flight, players, court, s, -1);
+        }
+
+        /// <summary>
+        /// Same, but the player at index <paramref name="excludePlayer"/> may not play this ball
+        /// (the player who just touched it: nobody touches twice in a row). Pass -1 for no exclusion.
+        /// </summary>
+        public static InterceptPlan Plan(TrajectoryResult flight, IList<PlayerAgent> players,
+                                         CourtSpec court, InterceptSettings s, int excludePlayer)
+        {
             InterceptPlan best = new InterceptPlan();
             if (!flight.Landed) return best;
 
@@ -76,6 +86,7 @@ namespace BenchToBanner.Physics
 
                 for (int i = 0; i < players.Count; i++)
                 {
+                    if (i == excludePlayer) continue;
                     PlayerAgent p = players[i];
                     if (p.Side != side) continue;
 
